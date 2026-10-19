@@ -16,6 +16,20 @@ const mocks = vi.hoisted(() => ({
   language: vi.fn(),
   theme: vi.fn(),
 }))
+vi.mock('./setup-identity-directory', () => ({
+  SetupIdentityDirectory: ({
+    onSelect,
+  }: {
+    onSelect: (identity: { accountId: string; userId: string }) => void
+  }) => (
+    <button
+      type="button"
+      onClick={() => onSelect({ accountId: 'team', userId: 'alice' })}
+    >
+      choose-directory-user
+    </button>
+  ),
+}))
 vi.mock('next-themes', () => ({
   useTheme: () => ({ theme: 'system', setTheme: mocks.theme }),
 }))
@@ -526,4 +540,38 @@ it('offers an exit on first use without requiring a valid address', () => {
   fireEvent.click(screen.getByRole('button', { name: 'exit' }))
   expect(onCancel).toHaveBeenCalledOnce()
   expect(mocks.verify).not.toHaveBeenCalled()
+})
+
+it('opens the account/user picker only after Verify and rejects a mismatched user key', async () => {
+  mocks.verify.mockImplementationOnce(async (draft) => draft)
+  render(<StudioSetup onComplete={vi.fn()} />)
+  fireEvent.change(screen.getByLabelText('settings:fields.baseUrl'), {
+    target: { value: 'https://service.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'next' }))
+  fireEvent.change(screen.getByLabelText('settings:fields.rootApiKey'), {
+    target: { value: 'root-secret' },
+  })
+  expect(screen.queryByText('choose-directory-user')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'verify' }))
+  fireEvent.click(await screen.findByText('choose-directory-user'))
+  expect(
+    screen.getByLabelText<HTMLInputElement>('settings:fields.userApiKey').value,
+  ).toBe('')
+  expect(screen.queryByRole('button', { name: 'enter' })).toBeNull()
+  mocks.verify.mockImplementationOnce(async (draft) => ({
+    ...draft,
+    accountId: 'other',
+    userId: 'bob',
+  }))
+  fireEvent.change(screen.getByLabelText('settings:fields.userApiKey'), {
+    target: { value: 'wrong-user-key' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'verify' }))
+  await waitFor(() =>
+    expect(screen.getByRole('alert').textContent).toContain(
+      'directoryIdentityMismatch',
+    ),
+  )
+  expect(screen.queryByRole('button', { name: 'enter' })).toBeNull()
 })

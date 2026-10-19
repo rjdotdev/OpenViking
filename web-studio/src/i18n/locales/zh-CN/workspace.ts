@@ -657,6 +657,15 @@ const workspace = {
     },
   },
   accountSwitcher: {
+    servicesSearch: '搜索服务',
+    identitiesSearch: '搜索已保存身份',
+    identities: '已保存身份',
+    connected: '已连接',
+    noConnections: '没有匹配的服务',
+    noIdentities: '此服务没有匹配的已保存身份',
+    backToServices: '返回服务列表',
+    accountSettings: 'Account 设置',
+    manageConnections: '管理连接',
     create: '新建账号',
     connections: {
       add: '添加连接',
