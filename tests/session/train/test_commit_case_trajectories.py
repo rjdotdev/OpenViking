@@ -97,6 +97,7 @@ def commit_runtime(monkeypatch):
             link_enabled=False,
             custom_templates_dir=None,
             experimental_memory_switch=False,
+            maintenance_review_tokens=4096,
             extraction_output_format="json",
             session_skill_extraction_enabled=False,
         ),
@@ -228,7 +229,14 @@ async def _commit(
     result = await compressor.train_from_extracted_cases(
         cases=runtime.cases[:1] if single else runtime.cases,
         case_uri_by_name=runtime.case_uris,
-        messages=[Message(id="m", role="user", parts=[TextPart("Book a trip, then cancel it.")])],
+        messages=[
+            Message(
+                id="m",
+                role="user",
+                parts=[TextPart("Book a trip, then cancel it.")],
+                created_at="2026-10-19T00:00:00",
+            )
+        ],
         ctx=runtime.ctx,
         archive_uri="viking://user/u/sessions/s/history/archive_001",
         collect_memory_diff=True,
@@ -304,7 +312,7 @@ async def test_commit_preserves_evaluator_training_semantics(
         )
     separate_extraction = evaluation_mode == "different_feedback"
     rows = (
-        [[("book", None)], [("cancel", None)]]
+        [[("shared", None)], [("shared", None)]]
         if separate_extraction
         else [
             [
@@ -328,7 +336,7 @@ async def test_commit_preserves_evaluator_training_semantics(
         [{"book", "cancel", "shared", "other"}]
         if same
         else (
-            [{"book"}, {"cancel"}]
+            [{"shared"}, {"shared"}]
             if separate_extraction
             else [{"book", "shared"}, {"cancel", "shared"}]
         )
@@ -338,10 +346,22 @@ async def test_commit_preserves_evaluator_training_semantics(
     assert len([item for item in adds if item["memory_type"] == "trajectories"]) == sum(
         map(len, rows)
     )
+    case_trajectories = []
     for case in runtime.cases:
         uri = runtime.case_uris[case.name]
         mf = MemoryFileUtils.read(runtime.fs.files[uri], uri=uri)
-        expected_names = {case.name} if separate_extraction else {case.name, "shared"}
+        expected_names = {"shared"} if separate_extraction else {case.name, "shared"}
         assert {
             link["to_uri"] for link in mf.links if "/memories/experiences/" in link["to_uri"]
         } == {f"{runtime.trainer.policy_set.root_uri}/{name}.md" for name in expected_names}
+        trajectory_uris = {
+            link["to_uri"] for link in mf.links if "/memories/trajectories/" in link["to_uri"]
+        }
+        case_trajectories.append(trajectory_uris)
+        if separate_extraction:
+            assert len(trajectory_uris) == 1
+            trajectory_uri = next(iter(trajectory_uris))
+            trajectory = MemoryFileUtils.read(runtime.fs.files[trajectory_uri], uri=trajectory_uri)
+            assert trajectory.extra_fields["case_uris"] == [uri]
+    if separate_extraction:
+        assert case_trajectories[0].isdisjoint(case_trajectories[1])

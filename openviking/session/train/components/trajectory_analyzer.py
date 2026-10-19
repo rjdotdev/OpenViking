@@ -88,10 +88,11 @@ class TrajectoryRolloutAnalyzer:
             raise ValueError("TrajectoryAnalyzerContext.request_context is required")
 
         evaluation = await self._evaluate_rollout(rollout, context)
+        feedback_injected = evaluation is not None and context.inject_evaluation_feedback
         extraction_messages = _messages_with_evaluation_feedback(
             rollout.messages,
             evaluation=evaluation,
-            enabled=evaluation is not None and context.inject_evaluation_feedback,
+            enabled=feedback_injected,
         )
         result = await self.extract_trajectory_memories(
             messages=extraction_messages,
@@ -102,6 +103,8 @@ class TrajectoryRolloutAnalyzer:
             case_name=getattr(rollout.case, "name", ""),
             source_archive_uri=context.source_archive_uri,
             case_candidates=context.case_candidates,
+            # Only feedback present in the extraction input changes trajectory identity.
+            extraction_scope=extraction_messages[-1].content if feedback_injected else "",
         )
         contexts = list((result or {}).get("contexts", []))
         skill_gradients = list((result or {}).get("skill_gradients", []))
@@ -152,6 +155,7 @@ class TrajectoryRolloutAnalyzer:
         case_name: str = "",
         source_archive_uri: str = "",
         case_candidates: list[dict[str, Any]] | None = None,
+        extraction_scope: str = "",
     ) -> dict[str, list[Any]]:
         """Extract trajectory and/or reusable skill operations from rollout messages.
 
@@ -183,6 +187,7 @@ class TrajectoryRolloutAnalyzer:
             vlm_config=vlm_config,
             source_archive_uri=source_archive_uri,
             case_candidates=case_candidates,
+            extraction_scope=extraction_scope,
         )
         consumed_experience_uris = collect_read_experience_uris(messages, ctx=ctx)
         phase_result = await self._run_trajectory_extract_phase(
