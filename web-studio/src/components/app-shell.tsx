@@ -325,6 +325,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (pathname === '/config')
     return (
       <StudioSetup
+        canReturnToWorkspace={!needsSetup}
+        onCancel={() => {
+          if (needsSetup) {
+            window.location.assign('https://docs.openviking.ai/')
+          } else {
+            void navigate({ to: '/', replace: true })
+          }
+        }}
         onComplete={(connection) => {
           setNeedsSetup(false)
           void navigate({

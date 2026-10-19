@@ -1,4 +1,7 @@
 export default {
+  openSourceConnection: 'OpenSource',
+  cancel: 'Cancel',
+  exit: 'Exit Studio',
   connectionTitle: 'Connect your workspace.',
   preferencesHint: 'Choose your language and appearance.',
   connectionHint: 'Connect and verify an OpenViking service.',
@@ -19,7 +22,7 @@ export default {
   savedConnectionUnavailable:
     'This saved connection is unavailable. Choose another one or enter a new API Key.',
   newAddressHint: 'Enter a valid HTTP or HTTPS address to continue.',
-  hostedEndpoint: 'Service address',
+  hostedEndpoint: 'Service Address',
   preferences: 'Preferences',
   connection: 'Connect a service',
   welcome: 'Welcome to\nOpenViking Studio',

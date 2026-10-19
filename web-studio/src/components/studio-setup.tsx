@@ -33,7 +33,6 @@ import {
   studioSetupDestination,
   CLOUD_SETUP_URL,
   completeStudioSetup,
-  markStudioSetupPending,
   savedSetupConnections,
   verifyStudioSetup,
 } from '#/lib/connection/onboarding'
@@ -57,25 +56,15 @@ function withoutCredentials(connection: ConnectionDraft): ConnectionDraft {
   return { ...connection, apiKey: '', adminApiKey: '' }
 }
 
-function savedConnectionTitle(profile: SavedConnection): string {
-  const identity = [
-    profile.connection.accountId,
-    profile.connection.userId,
-  ].filter((value) => value && value !== 'default')
-  return identity.length
-    ? `${profile.name} · ${identity.join('/')}`
-    : profile.name
-}
-
 function savedConnectionLabel(
   profile: SavedConnection,
   profiles: SavedConnection[],
+  providerLabel: string,
 ): string {
-  const title = savedConnectionTitle(profile)
+  const domain = new URL(profile.connection.baseUrl).host
+  const title = `${providerLabel} · ${domain}`
   const sameLabel = profiles.filter(
-    (candidate) =>
-      savedConnectionTitle(candidate) === title &&
-      candidate.connection.baseUrl === profile.connection.baseUrl,
+    (candidate) => new URL(candidate.connection.baseUrl).host === domain,
   )
   if (sameLabel.length < 2) return title
   return `${title} (${sameLabel.findIndex((candidate) => candidate.id === profile.id) + 1})`
@@ -96,8 +85,12 @@ function newConnectionDraft(
 
 export function StudioSetup({
   onComplete,
+  onCancel,
+  canReturnToWorkspace = false,
 }: {
   onComplete: (connection: ConnectionDraft) => void
+  onCancel?: () => void
+  canReturnToWorkspace?: boolean
 }) {
   const { t, i18n } = useTranslation(['onboarding', 'studio', 'settings'])
   const { theme, setTheme } = useTheme()
@@ -201,7 +194,6 @@ export function StudioSetup({
   const cardAnimationRef = useRef<Animation | null>(null)
   const previousCardHeightRef = useRef<number | null>(null)
   useEffect(() => {
-    markStudioSetupPending()
     return () => abortRef.current?.abort()
   }, [])
   useEffect(() => {
@@ -394,6 +386,20 @@ export function StudioSetup({
           <span className="text-base font-semibold tracking-tight">
             {t('brand')}
           </span>
+          {onCancel ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="ml-auto"
+              onClick={() => {
+                connectionRevisionRef.current += 1
+                abortRef.current?.abort()
+                onCancel()
+              }}
+            >
+              {t(canReturnToWorkspace ? 'cancel' : 'exit')}
+            </Button>
+          ) : null}
         </div>
         <div className="grid items-start gap-6 lg:grid-cols-[1fr_1.15fr] lg:gap-20">
           <header className="lg:pt-5">
@@ -515,6 +521,7 @@ export function StudioSetup({
                               ? savedConnectionLabel(
                                   selectedProfile,
                                   providerConnections,
+                                  t('openSourceConnection'),
                                 )
                               : t('newConnection')}
                           </SelectValue>
@@ -534,6 +541,7 @@ export function StudioSetup({
                                 {savedConnectionLabel(
                                   profile,
                                   providerConnections,
+                                  t('openSourceConnection'),
                                 )}
                               </span>
                             </SelectItem>
@@ -586,32 +594,18 @@ export function StudioSetup({
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <label
-                        htmlFor="setup-hosted-url"
+                      <p
+                        id="setup-hosted-url-label"
                         className="text-sm font-medium"
                       >
                         {t('hostedEndpoint')}
-                      </label>
-                      <Input
-                        id="setup-hosted-url"
-                        className="h-11 rounded-lg"
-                        type="url"
-                        value={draft.baseUrl}
-                        aria-invalid={Boolean(draft.baseUrl) && !canContinue}
-                        onChange={(event) =>
-                          update({
-                            baseUrl: event.target.value,
-                            apiKey: '',
-                            adminApiKey: '',
-                          })
-                        }
-                        {...PLAIN_INPUT_PROPS}
-                      />
-                      {draft.baseUrl && !canContinue ? (
-                        <p className="text-xs text-destructive">
-                          {t('studio:profiles.invalidUrl')}
-                        </p>
-                      ) : null}
+                      </p>
+                      <p
+                        aria-labelledby="setup-hosted-url-label"
+                        className="break-all rounded-lg bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
+                      >
+                        {draft.baseUrl}
+                      </p>
                     </div>
                   )}
                   <fieldset className="space-y-3">
@@ -697,8 +691,12 @@ export function StudioSetup({
                   <fieldset disabled={busy} className="space-y-4">
                     <div className="grid gap-2 text-sm">
                       <span className="font-medium">
-                        {t('settings:fields.baseUrl')}
+                        {t('studio:serviceType')}
                       </span>
+                      <p>{t(`studio:providers.${draft.serviceSelection}`)}</p>
+                    </div>
+                    <div className="grid gap-2 text-sm">
+                      <span className="font-medium">{t('hostedEndpoint')}</span>
                       <p className="break-all rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm">
                         {draft.baseUrl}
                       </p>

@@ -1,4 +1,7 @@
 export default {
+  openSourceConnection: 'OpenSource',
+  cancel: '取消',
+  exit: '退出 Studio',
   connectionTitle: '连接你的工作区。',
   preferencesHint: '选择你熟悉的语言与外观。',
   connectionHint: '连接并验证你的 OpenViking 服务。',
