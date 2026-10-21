@@ -181,7 +181,6 @@ async def test_closed_handle_preserves_overdue_rollover_deadline(tmp_path):
         if sink._handler.stream is not None:
             sink._handler.stream.close()
         sink._handler.stream = None
-        assert sink._handler.stream is None
         sink._handler.rolloverAt = int(time.time()) - 1
 
         await sink.write(events=[FakeUsageEvent(event_id="ue_after")])
