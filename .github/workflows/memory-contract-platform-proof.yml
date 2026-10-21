@@ -1,0 +1,129 @@
+name: Memory contract platform proof
+
+# Fork-only validation harness, deliberately excluded from the upstream PR.
+on:
+  push:
+    branches: [ci/optional-supersedes-platform-proof]
+
+permissions:
+  contents: read
+
+jobs:
+  memory-contract:
+    if: github.repository == 'rjdotdev/OpenViking'
+    name: Memory contract (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+        python: ['3.10', '3.12']
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET_SHA: 6b169a67dcb36af9d4452287a07bfb76af28e12e
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 6b169a67dcb36af9d4452287a07bfb76af28e12e
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install locked Python dependencies without building native source
+        run: |
+          uv sync --frozen --no-install-project --extra dev
+          uv pip install pytest-asyncio==1.4.0 pytest-cov==7.1.0
+          uv pip install --no-deps openviking==0.5.1.1
+
+      - name: Prepare neutral configuration and published native dependency
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata
+          import os
+          import platform
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          root = Path.cwd().resolve()
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == os.environ['TARGET_SHA'], (actual, os.environ['TARGET_SHA'])
+          expected_os = {'Windows': 'Windows', 'macOS': 'Darwin'}[os.environ['RUNNER_OS']]
+          assert platform.system() == expected_os, platform.platform()
+          print(f'Tested source: {actual}; platform: {platform.platform()}; machine: {platform.machine()}')
+          print(f'Python: {sys.version}')
+
+          distribution = importlib.metadata.distribution('openviking')
+          library_dir = Path(distribution.locate_file('openviking/lib'))
+          libraries = [path for path in library_dir.glob('ragfs_python*')
+                       if path.suffix in {'.so', '.pyd'}]
+          assert libraries, f'No published native dependency in {library_dir}'
+          destination = root / 'openviking' / 'lib'
+          destination.mkdir(exist_ok=True)
+          for library in libraries:
+              shutil.copy2(library, destination / library.name)
+              print(f'Published native dependency: {library.name}')
+
+          config = Path(os.environ['RUNNER_TEMP']) / 'memory-contract-test-config.json'
+          config.write_text('{}\n', encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
+              stream.write(f'OPENVIKING_CONFIG_FILE={config}\n')
+          PY
+
+      - name: Verify checkout source imports
+        run: |
+          uv run --no-sync python - <<'PY'
+          import inspect
+          from pathlib import Path
+          from openviking.session.memory import dataclass, schema_model_generator
+          from openviking.session.memory.extraction_output_protocol import python_protocol
+          from openviking.session.train.components import policy_optimizer
+          from openviking.pyagfs import get_binding_client
+
+          root = Path.cwd().resolve()
+          for module in (dataclass, schema_model_generator, python_protocol, policy_optimizer):
+              location = Path(inspect.getfile(module)).resolve()
+              assert location.is_relative_to(root), location
+              print(f'Source import: {module.__name__}: {location.relative_to(root)}')
+          binding_client, _ = get_binding_client()
+          assert binding_client is not None
+          PY
+
+      - name: Run complete focused memory and training contracts
+        run: >-
+          uv run --no-sync python -m pytest -q -ra -o addopts='' --no-cov
+          tests/session/memory/test_extraction_output_protocol.py
+          tests/session/memory/test_replace_string_edits.py
+          tests/session/train/test_train_components.py
+          --junitxml=memory-contract.xml
+
+      - name: Require all regression cases to run without skips
+        if: always()
+        run: |
+          uv run --no-sync python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse('memory-contract.xml').getroot()
+          cases = list(root.iter('testcase'))
+          assert len(cases) == 230, f'Expected 230 contract cases, got {len(cases)}'
+          for case in cases:
+              for status in ('failure', 'error', 'skipped'):
+                  assert case.find(status) is None, ET.tostring(case, encoding='unicode')
+          print(f'All {len(cases)} contract cases passed, none skipped')
+          PY
+
+      - name: Upload exact-source pytest report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: memory-contract-${{ matrix.os }}-py${{ matrix.python }}-${{ env.TARGET_SHA }}
+          path: memory-contract.xml
+          if-no-files-found: error
