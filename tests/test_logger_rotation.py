@@ -178,12 +178,71 @@ def test_rust_reopen_can_log_without_reentering_the_process_lock(tmp_path, monke
         handler.close()
 
 
-def _write_worker_records(path, barrier, index):
+def _hold_process_lock(path, ready, release):
+    from openviking_cli.utils.log_rotation import interprocess_lock
+
+    with interprocess_lock(path):
+        ready.set()
+        assert release.wait(timeout=30), "parent did not release the lock holder"
+
+
+def test_native_process_lock_excludes_other_processes(tmp_path):
+    import multiprocessing
+
+    context = multiprocessing.get_context("spawn")
+    ready, release = context.Event(), context.Event()
+    path = tmp_path / ".server.log.lock"
+    worker = context.Process(target=_hold_process_lock, args=(path, ready, release))
+    descriptor = None
+    try:
+        worker.start()
+        assert ready.wait(timeout=30), f"lock holder exitcode={worker.exitcode}"
+        descriptor = os.open(path, os.O_RDWR)
+        if os.name == "nt":
+            import msvcrt
+
+            def acquire():
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+
+            def unlock():
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def acquire():
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def unlock():
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+        with pytest.raises(OSError):
+            acquire()
+        release.set()
+        worker.join(timeout=10)
+        assert worker.exitcode == 0, f"lock holder exitcode={worker.exitcode}"
+        acquire()
+        unlock()
+    finally:
+        release.set()
+        if descriptor is not None:
+            os.close(descriptor)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=5)
+        if worker.is_alive():
+            worker.kill()
+            worker.join(timeout=5)
+        assert not worker.is_alive(), f"lock holder {worker.pid} did not exit"
+
+
+def _write_worker_records(path, barrier, index, deadline):
     handler = logger_module._RustAwareTimedRotatingFileHandler(path, when="midnight")
     try:
         handler.emit(logging.makeLogRecord({"msg": f"before {index}"}))
-        handler.rolloverAt = int(time.time()) - 1
-        barrier.wait(timeout=10)
+        handler.rolloverAt = deadline
+        barrier.wait(timeout=30)
         for number in range(20):
             handler.emit(logging.makeLogRecord({"msg": f"after {index} {number}"}))
     finally:
@@ -192,20 +251,32 @@ def _write_worker_records(path, barrier, index):
 
 @pytest.mark.skipif(os.name == "nt", reason="real POSIX worker-process regression")
 def test_worker_processes_keep_post_rollover_records_out_of_backup(tmp_path):
+    _assert_worker_rotation(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles and msvcrt locks")
+def test_windows_worker_processes_keep_post_rollover_records_out_of_backup(tmp_path):
+    _assert_worker_rotation(tmp_path)
+
+
+def _assert_worker_rotation(tmp_path):
     import multiprocessing
 
     context = multiprocessing.get_context("spawn")
     barrier = context.Barrier(2)
     path = tmp_path / "server.log"
+    # One absolute boundary prevents different backup names across clock ticks.
+    deadline = int(time.time()) - 60
     workers = [
-        context.Process(target=_write_worker_records, args=(path, barrier, i)) for i in range(2)
+        context.Process(target=_write_worker_records, args=(path, barrier, i, deadline))
+        for i in range(2)
     ]
     try:
         for worker in workers:
             worker.start()
         for worker in workers:
-            worker.join(timeout=15)
-            assert worker.exitcode == 0
+            worker.join(timeout=45)
+            assert worker.exitcode == 0, f"worker {worker.pid}: exitcode={worker.exitcode}"
         backups = list(tmp_path.glob("server.log.*"))
         assert len(backups) == 1
         assert sorted(backups[0].read_text().splitlines()) == ["before 0", "before 1"]
@@ -217,21 +288,29 @@ def test_worker_processes_keep_post_rollover_records_out_of_backup(tmp_path):
             if worker.is_alive():
                 worker.terminate()
                 worker.join(timeout=5)
+            if worker.is_alive():
+                worker.kill()
+                worker.join(timeout=5)
+        assert not any(worker.is_alive() for worker in workers), "workers did not exit"
 
 
 def test_failed_rollover_with_nonpositive_interval_does_not_loop(tmp_path, monkeypatch):
     handler = logger_module._RustAwareTimedRotatingFileHandler(
         tmp_path / "server.log", when="midnight"
     )
-    monkeypatch.setattr(os, "rename", Mock(side_effect=PermissionError("sharing violation")))
-    monkeypatch.setattr(handler, "computeRollover", lambda now: now)
+    rename = Mock(side_effect=PermissionError("sharing violation"))
     monkeypatch.setattr(logger_module, "_reopen_rust_tracing_file", Mock())
     try:
+        # Windows opens lazily: create the source before testing failed rename.
+        handler.emit(logging.makeLogRecord({"msg": "before"}))
+        monkeypatch.setattr(os, "rename", rename)
+        monkeypatch.setattr(handler, "computeRollover", lambda now: now)
         handler.interval = 0
         handler.rolloverAt = int(time.time()) - 1
         handler.emit(logging.makeLogRecord({"msg": "still written"}))
         assert handler.rolloverAt > time.time()
-        assert (tmp_path / "server.log").read_text() == "still written\n"
+        rename.assert_called_once()
+        assert (tmp_path / "server.log").read_text() == "before\nstill written\n"
     finally:
         handler.close()
 
