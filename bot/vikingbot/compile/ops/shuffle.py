@@ -191,7 +191,11 @@ class Shuffle:
             )
             pending = [batch for batch in pending if any(text not in vectors for text in batch)]
         if pending:
-            r.failures.append(f"{len(pending)} routing embedding batches failed: {errors[0]}")
+            lost = sum(text not in vectors for text in texts)
+            r.failures.append(
+                f"{lost} records have no routing vector after {len(pending)} embedding "
+                f"batches failed: {errors[0]}"
+            )
         return [vectors.get(text) for text in texts]
 
     async def candidates(self, text: str, stable_uri=None) -> list[dict]:

@@ -79,7 +79,7 @@ async def test_vectors_keep_successful_batches_and_retry_failed_ones():
     # Both batches retry once, then only the failing batch retries until the budget ends.
     assert runtime.metrics["embedding_batch_retries"] == 2 + (MAX_JOB_ATTEMPTS - 2)
     assert len(runtime.failures) == 1
-    assert runtime.failures[0].startswith("1 routing embedding batches failed:")
+    assert runtime.failures[0].startswith("8 records have no routing vector after 1 embedding")
     assert "HTTP 429" in runtime.failures[0]
 
 
