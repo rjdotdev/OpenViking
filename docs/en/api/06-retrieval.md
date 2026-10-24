@@ -34,7 +34,7 @@ Semantic retrieval without session context.
 
 #### 1. API Implementation Introduction
 
-The `find()` method runs one global vector similarity search in QUICK mode for simple query scenarios. It recalls `limit` candidates and supports filtering by L0/L1/L2 through `level`.
+The `find()` method runs one global vector similarity search in QUICK mode for simple query scenarios. It recalls `limit` candidates (counted per URI) and supports filtering by L0/L1/L2 through `level`.
 
 **Processing Pipeline**:
 1. Convert query text to vector

@@ -56,8 +56,9 @@ def records_per_uri(level: Optional[Iterable[Any]] = None) -> int:
     record has a URI of its own. Searches that return one result per URI fetch
     this many records per result.
     """
-    levels = None if level is None else {int(item) for item in level}
-    return 2 if levels is None or {0, 1} <= levels else 1
+    if not level:
+        return 2
+    return 2 if {0, 1} <= {int(item) for item in level} else 1
 
 
 def vector_record_id(account_id: str, uri: str, level: Any = 2) -> str:
